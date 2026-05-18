@@ -1,0 +1,14 @@
+services:
+  build:
+    build: .
+    image: remote-controller-build:latest
+
+  extract:
+    image: remote-controller-build:latest
+    volumes:
+      - ./out:/out
+    entrypoint:
+      - cp
+    command:
+      - /workspace/android/app/build/outputs/apk/release/app-release.apk
+      - /out/remote-controller.apk

@@ -1,0 +1,24 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release APK in Docker
+        run: |
+          docker compose build
+          docker compose run --rm extract
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-controller-apk
+          path: out/remote-controller.apk
