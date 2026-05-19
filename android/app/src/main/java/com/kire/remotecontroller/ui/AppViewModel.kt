@@ -4,33 +4,32 @@ import android.app.Application
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kire.remotecontroller.RemoteFacade
 import com.kire.remotecontroller.data.DeviceStore
 import com.kire.remotecontroller.discovery.DiscoveredTv
 import com.kire.remotecontroller.discovery.NsdDiscovery
-import com.kire.remotecontroller.epg.ChannelRow
+import com.kire.remotecontroller.epg.ChannelGuideRow
 import com.kire.remotecontroller.epg.EpgRepository
+import com.kire.remotecontroller.epg.GenreFilter
+import com.kire.remotecontroller.epg.GenreMatcher
+import com.kire.remotecontroller.epg.EpgGridBuilder
 import com.kire.remotecontroller.epg.ProgrammeEntity
+import com.kire.remotecontroller.epg.TagEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Calendar
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val store = DeviceStore(app)
     private val discovery = NsdDiscovery(app)
-
-    init {
-        store.getHost()?.let { selectManual(it, store.getName() ?: it) }
-    }
-
-    /** Call after runtime permissions are granted (from MainActivity). */
-    fun onPermissionsReady() {
-        scan()
-    }
 
     private val _tvs = MutableStateFlow<List<DiscoveredTv>>(emptyList())
     val tvs: StateFlow<List<DiscoveredTv>> = _tvs
@@ -41,14 +40,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedHost = MutableStateFlow<String?>(store.getHost())
     val selectedHost: StateFlow<String?> = _selectedHost
 
+    private val _tvName = MutableStateFlow<String?>(store.getName() ?: store.getHost())
+    val tvName: StateFlow<String?> = _tvName
+
     private var facade: RemoteFacade? = null
     private var epgRepo: EpgRepository? = null
 
-    private val _epgChannels = MutableStateFlow<List<ChannelRow>>(emptyList())
-    val epgChannels: StateFlow<List<ChannelRow>> = _epgChannels
-
     private val _epgProgrammes = MutableStateFlow<List<ProgrammeEntity>>(emptyList())
     val epgProgrammes: StateFlow<List<ProgrammeEntity>> = _epgProgrammes
+
+    private val _epgGridRows = MutableStateFlow<List<ChannelGuideRow>>(emptyList())
+    val epgGridRows: StateFlow<List<ChannelGuideRow>> = _epgGridRows
+
+    private val _userTags = MutableStateFlow<List<TagEntity>>(emptyList())
+    val userTags: StateFlow<List<TagEntity>> = _userTags
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery
+
+    private val _genreFilter = MutableStateFlow(GenreFilter.ALL)
+    val genreFilter: StateFlow<GenreFilter> = _genreFilter
+
+    private val _selectedTagId = MutableStateFlow<Long?>(null)
+    val selectedTagId: StateFlow<Long?> = _selectedTagId
 
     private val _currentChannel = MutableStateFlow<String?>(null)
     val currentChannel: StateFlow<String?> = _currentChannel
@@ -56,6 +70,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _channelBuffer = MutableStateFlow("")
     val channelBuffer: StateFlow<String> = _channelBuffer
 
+    private var channelNumberMap = emptyMap<String, Int>()
     private var lastKeyAt = 0L
     private var lastKeyName: String? = null
 
@@ -65,14 +80,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val needsAtvPairing: Boolean
         get() = !store.isAtvPaired()
 
+    val canAutoResume: Boolean
+        get() = !store.getHost().isNullOrBlank() && !needsPhilipsPairing
+
+    val xmlTvUrl: String
+        get() = store.getXmlTvUrl() ?: EpgRepository.DEFAULT_XMLTV
+
+    fun ensureFacade(): RemoteFacade {
+        val host = _selectedHost.value ?: store.getHost()
+            ?: error("No TV selected")
+        val existing = facade
+        if (existing != null && existing.host == host) return existing
+        val created = RemoteFacade(getApplication(), host)
+        facade = created
+        return created
+    }
+
+    private suspend fun epgRepoOrNull(): EpgRepository? = withContext(Dispatchers.IO) {
+        val f = facade ?: return@withContext null
+        epgRepo ?: EpgRepository(getApplication(), f.philipsApi(), store.getXmlTvUrl()).also {
+            epgRepo = it
+        }
+    }
+
+    fun onPermissionsReady() {
+        if (_selectedHost.value == null) {
+            store.getHost()?.let { host ->
+                _selectedHost.value = host
+                _tvName.value = store.getName() ?: host
+            }
+        }
+        scan()
+    }
+
     fun scan() {
         viewModelScope.launch {
             _status.value = "Scanning for TVs…"
             runCatching {
-                discovery.discover().collect { list ->
-                    _tvs.value = list
-                }
+                val list = discovery.discover().first()
+                _tvs.value = list
             }.onFailure {
+                Log.w(TAG, "Scan failed", it)
                 _status.value = "Scan failed: ${it.message}"
             }
             _status.value = if (_tvs.value.isEmpty()) "No TVs found" else "Found ${_tvs.value.size} TV(s)"
@@ -81,24 +129,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectTv(tv: DiscoveredTv) {
         _selectedHost.value = tv.host
+        _tvName.value = tv.name
         store.saveDevice(tv.host, tv.name, store.getPhilipsUser(), store.getPhilipsPass(), store.isAtvPaired())
         facade = RemoteFacade(getApplication(), tv.host)
-        epgRepo = EpgRepository(getApplication(), facade!!.philipsApi(), store.getXmlTvUrl())
+        epgRepo = null
         _status.value = "Selected ${tv.name}"
     }
 
     fun selectManual(host: String, name: String = host) {
         _selectedHost.value = host
+        _tvName.value = name
         store.saveDevice(host, name, store.getPhilipsUser(), store.getPhilipsPass(), store.isAtvPaired())
         facade = RemoteFacade(getApplication(), host)
-        epgRepo = EpgRepository(getApplication(), facade!!.philipsApi(), store.getXmlTvUrl())
+        epgRepo = null
+    }
+
+    fun updateTvHost(host: String) {
+        val trimmed = host.trim()
+        if (trimmed.isBlank()) return
+        val name = _tvName.value ?: trimmed
+        selectManual(trimmed, name)
+        _status.value = "TV IP updated"
+    }
+
+    fun testConnection() {
+        viewModelScope.launch {
+            _status.value = "Testing connection…"
+            runCatching {
+                val f = ensureFacade()
+                val ch = f.currentChannel()
+                _status.value = if (ch != null) "Connected to TV" else "TV reachable (no channel info)"
+            }.onFailure {
+                _status.value = "Connection failed: ${it.message}"
+            }
+        }
     }
 
     fun startPhilipsPairing() {
-        val f = facade ?: return
         viewModelScope.launch {
             runCatching {
-                f.startPhilipsPairing()
+                ensureFacade().startPhilipsPairing()
                 _status.value = "Enter the PIN shown on your TV"
             }.onFailure {
                 _status.value = "Philips pairing start failed: ${it.message}"
@@ -107,10 +177,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun pairPhilips(pin: String) {
-        val f = facade ?: return
         viewModelScope.launch {
             runCatching {
-                f.pairPhilips(pin)
+                ensureFacade().pairPhilips(pin)
                 _status.value = "Philips pairing complete"
             }.onFailure {
                 _status.value = "Philips pairing failed: ${it.message}"
@@ -118,11 +187,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun pairAtv(pin: String) {
-        val f = facade ?: return
+    fun startAtvPairing() {
         viewModelScope.launch {
             runCatching {
-                f.pairAtv(pin)
+                ensureFacade().startAtvPairing()
+                _status.value = "Enter the 6-character code shown on your TV"
+            }.onFailure {
+                _status.value = "ATV pairing start failed: ${it.message}"
+            }
+        }
+    }
+
+    fun pairAtv(pin: String) {
+        viewModelScope.launch {
+            runCatching {
+                ensureFacade().pairAtv(pin)
                 _status.value = "Android TV pairing complete"
             }.onFailure {
                 _status.value = "ATV pairing failed: ${it.message}"
@@ -131,13 +210,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun key(name: String) {
-        val f = facade ?: return
         val now = System.currentTimeMillis()
         if (name == lastKeyName && now - lastKeyAt < KEY_DEBOUNCE_MS) return
         lastKeyAt = now
         lastKeyName = name
         viewModelScope.launch {
-            runCatching { f.sendKey(name) }
+            runCatching { ensureFacade().sendKey(name) }
                 .onFailure { _status.value = it.message ?: "Key failed" }
         }
     }
@@ -156,10 +234,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun sendChannelBuffer() {
         val digits = _channelBuffer.value
         if (digits.isEmpty()) return
-        val f = facade ?: return
         viewModelScope.launch {
             runCatching {
-                f.sendDigitSequence(digits)
+                ensureFacade().sendDigitSequence(digits)
                 _channelBuffer.value = ""
             }.onFailure { _status.value = it.message ?: "Channel send failed" }
         }
@@ -171,13 +248,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun text(value: String) {
-        val f = facade ?: return
-        viewModelScope.launch { f.sendText(value) }
+        viewModelScope.launch { ensureFacade().sendText(value) }
     }
 
     fun powerOff() {
-        val f = facade ?: return
-        viewModelScope.launch { f.powerOff() }
+        viewModelScope.launch { ensureFacade().powerOff() }
     }
 
     fun sources() = shortcut { it.sources() }
@@ -185,73 +260,209 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun youtube() = shortcut { it.youtube() }
     fun ambilight() = shortcut { it.ambilightToggle() }
     fun guide() = shortcut { it.guideKey() }
+    fun tvSettings() = shortcut { it.tvSettings() }
 
     private fun shortcut(block: suspend (RemoteFacade) -> Unit) {
-        val f = facade ?: return
         viewModelScope.launch {
-            runCatching { block(f) }.onFailure { _status.value = it.message ?: "Error" }
+            runCatching { block(ensureFacade()) }.onFailure { _status.value = it.message ?: "Error" }
         }
     }
 
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+        viewModelScope.launch { applyEpgFilters() }
+    }
+
+    fun setGenreFilter(filter: GenreFilter) {
+        _genreFilter.value = filter
+        viewModelScope.launch { applyEpgFilters() }
+    }
+
+    fun setSelectedTagId(tagId: Long?) {
+        _selectedTagId.value = tagId
+        viewModelScope.launch { applyEpgFilters() }
+    }
+
     fun loadCachedEpg() {
-        val repo = epgRepo ?: return
         viewModelScope.launch {
+            val repo = epgRepoOrNull() ?: return@launch
             runCatching {
                 repo.trimOversizedCache()
-                _epgChannels.value = repo.channels()
+                loadChannelNumbers()
                 _epgProgrammes.value = repo.programmesForDay(todayStartMillis())
+                _userTags.value = repo.allTags()
+                rebuildGrid()
+            }.onFailure {
+                Log.e(TAG, "loadCachedEpg failed", it)
+                _status.value = "Guide cache error — clear guide in Settings"
             }
         }
     }
 
     fun refreshEpg() {
-        val repo = epgRepo ?: return
         viewModelScope.launch {
+            val repo = epgRepoOrNull() ?: run {
+                _status.value = "Select a TV first"
+                return@launch
+            }
             _status.value = "Loading TV guide…"
             runCatching {
                 val count = repo.refresh()
-                _epgChannels.value = repo.channels()
+                loadChannelNumbers()
                 _epgProgrammes.value = repo.programmesForDay(todayStartMillis())
+                _userTags.value = repo.allTags()
+                rebuildGrid()
                 _status.value = "Loaded $count programmes"
             }.onFailure { error ->
+                Log.e(TAG, "refreshEpg failed", error)
                 _status.value = when (error) {
-                    is OutOfMemoryError -> "TV guide too large — tap Refresh after choosing a regional source"
+                    is OutOfMemoryError -> "TV guide too large — pick a regional source in Settings"
                     else -> "EPG failed: ${error.message}"
                 }
             }
         }
     }
 
-    private fun todayStartMillis(): Long {
-        return Calendar.getInstance().apply {
+    fun addTagToProgramme(stableKey: String, tagName: String) {
+        viewModelScope.launch {
+            val repo = epgRepoOrNull() ?: return@launch
+            runCatching {
+                repo.addTagToProgramme(stableKey, tagName)
+                _userTags.value = repo.allTags()
+                rebuildGrid()
+            }.onFailure {
+                _status.value = "Tag failed: ${it.message}"
+            }
+        }
+    }
+
+    fun removeTagFromProgramme(stableKey: String, tagName: String) {
+        viewModelScope.launch {
+            val repo = epgRepoOrNull() ?: return@launch
+            runCatching {
+                repo.removeTagFromProgramme(stableKey, tagName)
+                rebuildGrid()
+            }
+        }
+    }
+
+    private suspend fun loadChannelNumbers() {
+        channelNumberMap = runCatching { ensureFacade().fetchChannelNumberMap() }.getOrDefault(emptyMap())
+    }
+
+    private suspend fun rebuildGrid() {
+        val repo = epgRepoOrNull() ?: return
+        val tagMap = repo.tagNamesByStableKey()
+        val allRows = EpgGridBuilder.build(_epgProgrammes.value, channelNumberMap, tagMap)
+        _epgGridRows.value = filterRows(allRows, repo)
+    }
+
+    private suspend fun applyEpgFilters() {
+        val repo = epgRepoOrNull() ?: return
+        val tagMap = repo.tagNamesByStableKey()
+        val allRows = EpgGridBuilder.build(_epgProgrammes.value, channelNumberMap, tagMap)
+        _epgGridRows.value = filterRows(allRows, repo)
+    }
+
+    private suspend fun filterRows(rows: List<ChannelGuideRow>, repo: EpgRepository): List<ChannelGuideRow> {
+        val query = _searchQuery.value.trim().lowercase()
+        val genre = _genreFilter.value
+        val tagId = _selectedTagId.value
+        val tagStableKeys = if (tagId != null) repo.stableKeysForTag(tagId) else null
+
+        return rows.mapNotNull { row ->
+            val filteredSlots = row.slots.filter { slot ->
+                val programme = _epgProgrammes.value.find { it.id == slot.programmeId }
+                    ?: ProgrammeEntity(
+                        id = slot.programmeId,
+                        channelId = row.channelId,
+                        channelName = row.channelName,
+                        title = slot.title,
+                        startMillis = slot.startMillis,
+                        endMillis = slot.endMillis,
+                        description = slot.description,
+                        categories = slot.categories,
+                        stableKey = slot.stableKey,
+                    )
+                val genreOk = GenreMatcher.matches(programme, genre)
+                val tagOk = tagStableKeys == null || slot.stableKey in tagStableKeys
+                val searchOk = query.isBlank() ||
+                    row.channelName.lowercase().contains(query) ||
+                    slot.title.lowercase().contains(query)
+                genreOk && tagOk && searchOk
+            }
+            if (filteredSlots.isEmpty()) return@mapNotNull null
+            val channelMatches = query.isNotBlank() && row.channelName.lowercase().contains(query)
+            if (query.isNotBlank() && !channelMatches && filteredSlots.isEmpty()) return@mapNotNull null
+            row.copy(slots = if (channelMatches) row.slots else filteredSlots)
+        }
+    }
+
+    private fun todayStartMillis(): Long =
+        Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-    }
 
     fun refreshCurrentChannel() {
-        val f = facade ?: return
         viewModelScope.launch {
-            val json = f.currentChannel()
+            val json = runCatching { ensureFacade().currentChannel() }.getOrNull()
             _currentChannel.value = json?.let { formatChannel(it) }
         }
     }
 
     fun setXmlTvUrl(url: String) {
         store.setXmlTvUrl(url)
-        facade?.let { f ->
-            epgRepo = EpgRepository(getApplication(), f.philipsApi(), url)
+        epgRepo = null
+    }
+
+    fun clearEpgCache() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    epgRepo?.clearGuideCache()
+                    EpgRepository.clearDatabase(getApplication())
+                }
+                epgRepo = null
+                _epgProgrammes.value = emptyList()
+                _epgGridRows.value = emptyList()
+                _status.value = "TV guide cache cleared"
+            }.onFailure {
+                _status.value = "Clear failed: ${it.message}"
+            }
+        }
+    }
+
+    fun clearAllData() {
+        viewModelScope.launch {
+            facade?.disconnect()
+            facade = null
+            epgRepo = null
+            store.clearAll()
+            EpgRepository.clearDatabase(getApplication())
+            _selectedHost.value = null
+            _tvName.value = null
+            _epgProgrammes.value = emptyList()
+            _epgGridRows.value = emptyList()
+            _userTags.value = emptyList()
+            _status.value = "All app data cleared"
+        }
+    }
+
+    fun clearPairingOnly() {
+        viewModelScope.launch {
+            store.clearPairing()
+            _status.value = "Pairing cleared — pair again in Settings"
         }
     }
 
     fun recordVoiceAndSend() {
-        val f = facade ?: return
         viewModelScope.launch {
             runCatching {
                 val pcm = recordPcmSample()
-                f.sendVoice(pcm)
+                ensureFacade().sendVoice(pcm)
             }.onFailure {
                 _status.value = "Voice failed: ${it.message}"
             }
@@ -288,6 +499,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        private const val TAG = "RemoteController"
         private const val KEY_DEBOUNCE_MS = 400L
     }
 }

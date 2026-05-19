@@ -3,6 +3,7 @@ package com.kire.remotecontroller.philips
 import android.util.Base64
 import com.burgstaller.okhttp.digest.Credentials as DigestCredentials
 import com.burgstaller.okhttp.digest.DigestAuthenticator
+import com.kire.remotecontroller.net.LocalTvTls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,7 +17,6 @@ import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 class PhilipsApi(
@@ -25,7 +25,7 @@ class PhilipsApi(
     private var authKey: String? = null,
 ) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
-    private val unauthenticatedClient: OkHttpClient = createBaseClient()
+    private val unauthenticatedClient: OkHttpClient = createBaseClient(host)
 
     val isPaired: Boolean get() = !deviceId.isNullOrBlank() && !authKey.isNullOrBlank()
 
@@ -145,7 +145,7 @@ class PhilipsApi(
 
     private fun createDigestClient(user: String, pass: String): OkHttpClient {
         val digestAuth = DigestAuthenticator(DigestCredentials(user, pass))
-        return createBaseClient().newBuilder()
+        return createBaseClient(host).newBuilder()
             .authenticator(digestAuth)
             .build()
     }
@@ -200,24 +200,24 @@ class PhilipsApi(
             }
         }
 
-        private fun createBaseClient(): OkHttpClient {
-            val trustAll = arrayOf<TrustManager>(
-                object : X509TrustManager {
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) = Unit
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) = Unit
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                },
-            )
-            val sslContext = SSLContext.getInstance("TLS").apply {
-                init(null, trustAll, SecureRandom())
-            }
-            return OkHttpClient.Builder()
-                .sslSocketFactory(sslContext.socketFactory, trustAll[0] as X509TrustManager)
-                .hostnameVerifier { _, _ -> true }
+        private fun createBaseClient(tvHost: String): OkHttpClient {
+            val builder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)
-                .build()
+            if (LocalTvTls.isLocalTvHost(tvHost)) {
+                val trustManagers = LocalTvTls.trustManagers(tvHost)
+                val sslContext = SSLContext.getInstance("TLS").apply {
+                    init(null, trustManagers, SecureRandom())
+                }
+                builder
+                    .sslSocketFactory(
+                        sslContext.socketFactory,
+                        trustManagers[0] as X509TrustManager,
+                    )
+                    .hostnameVerifier(LocalTvTls.hostnameVerifier(tvHost))
+            }
+            return builder.build()
         }
     }
 }

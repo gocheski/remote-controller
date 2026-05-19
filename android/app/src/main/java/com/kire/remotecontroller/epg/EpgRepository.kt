@@ -14,7 +14,8 @@ class EpgRepository(
     private val philips: PhilipsApi,
     private val xmlTvUrl: String?,
 ) {
-    private val dao = EpgDatabase.get(context).epgDao()
+    private val appContext = context.applicationContext
+    private val dao by lazy { EpgDatabase.get(appContext).epgDao() }
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -28,9 +29,12 @@ class EpgRepository(
         val programmes = loadFromTvProbe().ifEmpty {
             val url = resolveXmlTvUrl(xmlTvUrl)
             loadFromXmlTv(url, windowStart, windowEnd)
+        }.map { p ->
+            val key = p.stableKey.ifBlank { ProgrammeKeys.stableKey(p) }
+            p.copy(stableKey = key)
         }
 
-        dao.clear()
+        dao.clearProgrammes()
         programmes.chunked(INSERT_BATCH).forEach { batch ->
             dao.insertAll(batch)
         }
@@ -46,8 +50,52 @@ class EpgRepository(
 
     suspend fun trimOversizedCache() {
         val count = dao.count()
-        if (count > MAX_PROGRAMMES) dao.clear()
+        if (count > MAX_PROGRAMMES) dao.clearProgrammes()
     }
+
+    suspend fun clearGuideCache() = withContext(Dispatchers.IO) {
+        dao.clearProgrammes()
+    }
+
+    suspend fun clearAllGuideData() = withContext(Dispatchers.IO) {
+        dao.clearProgrammes()
+        dao.clearProgrammeTags()
+        dao.clearTags()
+    }
+
+    suspend fun allTags(): List<TagEntity> = dao.allTags()
+
+    suspend fun addTagToProgramme(stableKey: String, tagName: String) = withContext(Dispatchers.IO) {
+        val trimmed = tagName.trim()
+        if (trimmed.isBlank()) return@withContext
+        val tagId = dao.findTagId(trimmed) ?: dao.insertTag(TagEntity(name = trimmed)).let { id ->
+            if (id == -1L) dao.findTagId(trimmed) ?: error("Failed to create tag") else id
+        }
+        dao.linkTag(ProgrammeTagEntity(stableKey = stableKey, tagId = tagId))
+    }
+
+    suspend fun removeTagFromProgramme(stableKey: String, tagName: String) = withContext(Dispatchers.IO) {
+        val tagId = dao.findTagId(tagName.trim()) ?: return@withContext
+        dao.unlinkTag(stableKey, tagId)
+    }
+
+    suspend fun tagNamesByStableKey(): Map<String, List<String>> = withContext(Dispatchers.IO) {
+        val links = dao.allProgrammeTagLinks()
+        val tagCache = mutableMapOf<Long, String>()
+        val result = mutableMapOf<String, MutableList<String>>()
+        for (link in links) {
+            val name = tagCache.getOrPut(link.tagId) {
+                dao.tagById(link.tagId)?.name.orEmpty()
+            }
+            if (name.isNotBlank()) {
+                result.getOrPut(link.stableKey) { mutableListOf() }.add(name)
+            }
+        }
+        result
+    }
+
+    suspend fun stableKeysForTag(tagId: Long): Set<String> =
+        dao.stableKeysForTag(tagId).toSet()
 
     private fun loadFromXmlTv(url: String, windowStart: Long, windowEnd: Long): List<ProgrammeEntity> {
         val request = Request.Builder().url(url).get().build()
@@ -108,7 +156,7 @@ class EpgRepository(
             val start = item.optLong("start", item.optLong("startTime", 0L))
             val end = item.optLong("end", item.optLong("endTime", start + 3_600_000))
             if (title.isNotBlank() && start > 0) {
-                result += ProgrammeEntity(
+                val entity = ProgrammeEntity(
                     channelId = channel,
                     channelName = channel,
                     title = title,
@@ -116,13 +164,13 @@ class EpgRepository(
                     endMillis = end,
                     description = item.optString("desc", ""),
                 )
+                result += entity.copy(stableKey = ProgrammeKeys.stableKey(entity))
             }
         }
         return result
     }
 
     companion object {
-        /** Regional XMLTV — stream-filtered to the next ~36h (not the full file). */
         const val DEFAULT_XMLTV = "https://www.open-epg.com/files/macedonia1.xml"
 
         const val MAX_PROGRAMMES = 2_500
@@ -136,6 +184,11 @@ class EpgRepository(
                 return DEFAULT_XMLTV
             }
             return stored
+        }
+
+        fun clearDatabase(context: Context) {
+            EpgDatabase.resetInstance()
+            context.applicationContext.deleteDatabase("epg.db")
         }
 
         val PRESET_URLS = listOf(

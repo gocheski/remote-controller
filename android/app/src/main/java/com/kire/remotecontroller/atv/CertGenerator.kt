@@ -25,13 +25,21 @@ object CertGenerator {
         val certFile = File(dir, "$safeHost.crt.pem")
         val keyFile = File(dir, "$safeHost.key.pem")
         if (certFile.exists() && keyFile.exists()) {
-            return CertMaterial(
-                certPem = certFile.readText(),
-                keyPem = keyFile.readText(),
-                cert = readCertificate(certFile.readText()),
-            )
+            return runCatching {
+                val certPem = certFile.readText()
+                val keyPem = keyFile.readText()
+                CertMaterial(certPem, keyPem, readCertificate(certPem))
+            }.getOrElse {
+                certFile.delete()
+                keyFile.delete()
+                generateAndSave(certFile, keyFile, "Philips Remote")
+            }
         }
-        val material = generate("Philips Remote")
+        return generateAndSave(certFile, keyFile, "Philips Remote")
+    }
+
+    private fun generateAndSave(certFile: File, keyFile: File, commonName: String): CertMaterial {
+        val material = generate(commonName)
         certFile.writeText(material.certPem)
         keyFile.writeText(material.keyPem)
         return material

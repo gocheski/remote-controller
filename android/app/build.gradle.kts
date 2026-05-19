@@ -14,8 +14,8 @@ android {
         applicationId = "com.kire.remotecontroller"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 12
+        versionName = "1.1.4"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

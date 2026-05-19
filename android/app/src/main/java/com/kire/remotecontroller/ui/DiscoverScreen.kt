@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -26,6 +27,7 @@ import com.kire.remotecontroller.discovery.DiscoveredTv
 fun DiscoverScreen(
     viewModel: AppViewModel,
     onSelected: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val tvs by viewModel.tvs.collectAsState()
     val status by viewModel.status.collectAsState()
@@ -34,10 +36,20 @@ fun DiscoverScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .screenContentInsets()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("My TV", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text("My TV", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = onOpenSettings) {
+                Text("App")
+            }
+        }
         Text(status)
         Button(onClick = { viewModel.scan() }, modifier = Modifier.fillMaxWidth()) {
             Text("Scan network")

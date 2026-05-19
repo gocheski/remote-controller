@@ -18,6 +18,7 @@ class AtvRemoteClient(
     private val mutex = Mutex()
     private var session: RemoteSession? = null
     private var connected = false
+    private var pendingPairing: PairingClient? = null
     var useFallbackOnly = false
 
     suspend fun ensureConnected(): Boolean = mutex.withLock {
@@ -45,17 +46,34 @@ class AtvRemoteClient(
         }
     }
 
-    suspend fun pair(pinHex: String) = withContext(Dispatchers.IO) {
+    suspend fun startPairing() = withContext(Dispatchers.IO) {
+        cancelPendingPairing()
         val material = CertGenerator.loadOrCreate(context, host)
         val keyStore = CertGenerator.createKeyStore(material.certPem, material.keyPem, "atvremote".toCharArray())
         val socket = TlsSockets.connect(host, 6467, keyStore, "atvremote".toCharArray())
         val pairing = PairingClient(socket, clientName, material.cert)
+        pairing.startPairing()
+        pendingPairing = pairing
+    }
+
+    suspend fun finishPairing(pinHex: String) = withContext(Dispatchers.IO) {
+        val pairing = pendingPairing ?: error("Call startPairing first")
         try {
-            pairing.startPairing()
             pairing.finishPairing(pinHex.uppercase())
         } finally {
             pairing.close()
+            pendingPairing = null
         }
+    }
+
+    suspend fun pair(pinHex: String) = withContext(Dispatchers.IO) {
+        startPairing()
+        finishPairing(pinHex)
+    }
+
+    private fun cancelPendingPairing() {
+        pendingPairing?.close()
+        pendingPairing = null
     }
 
     suspend fun sendKeyCode(name: String) {
@@ -83,6 +101,7 @@ class AtvRemoteClient(
             "8" -> Remotemessage.RemoteKeyCode.KEYCODE_8
             "9" -> Remotemessage.RemoteKeyCode.KEYCODE_9
             "GUIDE" -> Remotemessage.RemoteKeyCode.KEYCODE_GUIDE
+            "SETTINGS" -> Remotemessage.RemoteKeyCode.KEYCODE_SETTINGS
             "SEARCH" -> Remotemessage.RemoteKeyCode.KEYCODE_SEARCH
             else -> return
         }
@@ -105,6 +124,7 @@ class AtvRemoteClient(
     }
 
     fun disconnect() {
+        cancelPendingPairing()
         runCatching {
             session?.close()
         }

@@ -35,6 +35,8 @@ docker compose run --rm extract
 
 ## Install on phone
 
+This app is **not from Google Play** — it is signed with a debug key for home use. Samsung/Google may show **Play Protect** warnings such as “app not secure” or “workaround security”. That is expected for sideloaded home-network remotes: the app talks only to your TV on your Wi‑Fi (private IP) using TLS the TV provides locally. Tap **Install anyway** if you built the APK yourself from this repo.
+
 Copy `out/remote-controller.apk` to the phone and install (enable “Install unknown apps” if prompted), or use:
 
 ```bash

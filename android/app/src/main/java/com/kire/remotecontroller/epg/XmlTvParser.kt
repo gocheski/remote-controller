@@ -40,6 +40,7 @@ object XmlTvParser {
         parser.setInput(input, null)
 
         val channels = mutableMapOf<String, String>()
+        val channelNumbers = mutableMapOf<String, Int>()
         val programmes = ArrayList<ProgrammeEntity>(minOf(maxProgrammes, 512))
         var event = parser.eventType
         var currentChannelId: String? = null
@@ -55,6 +56,10 @@ object XmlTvParser {
                             channels[currentChannelId!!] = name
                         }
                     }
+                    "channel-number" -> if (currentChannelId != null) {
+                        parser.next()
+                        parser.text?.toIntOrNull()?.let { channelNumbers[currentChannelId!!] = it }
+                    }
                     "programme" -> {
                         val channelId = parser.getAttributeValue(null, "channel") ?: ""
                         val start = parseTime(parser.getAttributeValue(null, "start"))
@@ -64,6 +69,7 @@ object XmlTvParser {
                         if (inWindow) {
                             var title = ""
                             var desc = ""
+                            val categoryList = mutableListOf<String>()
                             val innerDepth = parser.depth
                             while (!(parser.next() == XmlPullParser.END_TAG && parser.depth == innerDepth)) {
                                 if (parser.eventType == XmlPullParser.START_TAG) {
@@ -76,16 +82,26 @@ object XmlTvParser {
                                             parser.next()
                                             desc = parser.text.orEmpty()
                                         }
+                                        "category" -> {
+                                            parser.next()
+                                            val cat = parser.text.orEmpty().trim()
+                                            if (cat.isNotBlank()) categoryList += cat
+                                        }
                                     }
                                 }
                             }
-                            programmes += ProgrammeEntity(
+                            val channelName = channels[channelId] ?: channelId
+                            val entity = ProgrammeEntity(
                                 channelId = channelId,
-                                channelName = channels[channelId] ?: channelId,
+                                channelName = channelName,
                                 title = title,
                                 startMillis = start,
                                 endMillis = stop,
                                 description = desc,
+                                categories = categoryList.joinToString(","),
+                            )
+                            programmes += entity.copy(
+                                stableKey = ProgrammeKeys.stableKey(entity),
                             )
                         } else {
                             skipElement(parser, "programme")

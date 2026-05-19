@@ -2,9 +2,9 @@ package com.kire.remotecontroller
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.graphics.Color
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -23,6 +23,7 @@ import com.kire.remotecontroller.ui.EpgScreen
 import com.kire.remotecontroller.ui.PairingScreen
 import com.kire.remotecontroller.ui.RemoteScreen
 import com.kire.remotecontroller.ui.RemoteTheme
+import com.kire.remotecontroller.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
     private var viewModel: AppViewModel? = null
@@ -81,22 +82,54 @@ private fun RemoteApp(onViewModelReady: (AppViewModel) -> Unit) {
         onViewModelReady(vm)
     }
 
-    NavHost(navController = nav, startDestination = "discover") {
-        composable("discover") {
-            DiscoverScreen(vm) {
-                nav.navigate(
-                    if (!vm.needsPhilipsPairing && !vm.needsAtvPairing) "remote" else "pairing",
-                )
+    LaunchedEffect(Unit) {
+        if (vm.canAutoResume) {
+            nav.navigate("remote") {
+                popUpTo("discover") { inclusive = true }
+                launchSingleTop = true
             }
         }
+    }
+
+    NavHost(navController = nav, startDestination = "discover") {
+        composable("discover") {
+            DiscoverScreen(
+                viewModel = vm,
+                onSelected = {
+                    nav.navigate(
+                        if (!vm.needsPhilipsPairing && !vm.needsAtvPairing) "remote" else "pairing",
+                    )
+                },
+                onOpenSettings = { nav.navigate("settings") },
+            )
+        }
         composable("pairing") {
-            PairingScreen(vm) { nav.navigate("remote") { popUpTo("discover") } }
+            PairingScreen(vm) {
+                nav.navigate("remote") {
+                    popUpTo("discover") { inclusive = true }
+                }
+            }
         }
         composable("remote") {
-            RemoteScreen(vm, onOpenGuide = { nav.navigate("epg") })
+            RemoteScreen(
+                viewModel = vm,
+                onOpenGuide = { nav.navigate("epg") },
+                onOpenSettings = { nav.navigate("settings") },
+            )
         }
         composable("epg") {
             EpgScreen(vm, onBack = { nav.popBackStack() })
+        }
+        composable("settings") {
+            SettingsScreen(
+                viewModel = vm,
+                onBack = { nav.popBackStack() },
+                onOpenPairing = {
+                    nav.navigate("pairing") {
+                        popUpTo("settings") { inclusive = false }
+                    }
+                },
+            )
         }
     }
 }

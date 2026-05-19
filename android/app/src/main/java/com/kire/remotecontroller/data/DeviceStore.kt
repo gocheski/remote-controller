@@ -3,11 +3,15 @@ package com.kire.remotecontroller.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
 
+/**
+ * Plain SharedPreferences — EncryptedSharedPreferences caused startup crashes on some
+ * devices when the master key or ciphertext was invalidated after app restarts.
+ */
 class DeviceStore(context: Context) {
-    private val prefs: SharedPreferences = createPrefs(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val prefs: SharedPreferences =
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun saveDevice(host: String, name: String, philipsUser: String?, philipsPass: String?, atvPaired: Boolean) {
         prefs.edit()
@@ -33,7 +37,20 @@ class DeviceStore(context: Context) {
         }
         return stored
     }
+
     fun setXmlTvUrl(url: String) = prefs.edit().putString(KEY_XMLTV_URL, url).apply()
+
+    fun clearPairing() {
+        prefs.edit()
+            .remove(KEY_PHILIPS_USER)
+            .remove(KEY_PHILIPS_PASS)
+            .putBoolean(KEY_ATV_PAIRED, false)
+            .apply()
+    }
+
+    fun clearAll() {
+        prefs.edit().clear().apply()
+    }
 
     companion object {
         private const val TAG = "DeviceStore"
@@ -45,19 +62,35 @@ class DeviceStore(context: Context) {
         private const val KEY_ATV_PAIRED = "atv_paired"
         private const val KEY_XMLTV_URL = "xmltv_url"
 
-        private fun createPrefs(context: Context): SharedPreferences {
-            return runCatching {
-                val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-                EncryptedSharedPreferences.create(
+        /** One-time migration from old encrypted prefs file if present. */
+        fun migrateLegacyEncryptedPrefsIfNeeded(context: Context) {
+            val appContext = context.applicationContext
+            val plain = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (!plain.getString(KEY_HOST, null).isNullOrBlank()) return
+            runCatching {
+                val masterKeyAlias = androidx.security.crypto.MasterKeys
+                    .getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+                val encrypted = androidx.security.crypto.EncryptedSharedPreferences.create(
                     PREFS_NAME,
                     masterKeyAlias,
-                    context,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+                    appContext,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
                 )
-            }.getOrElse { error ->
-                Log.w(TAG, "Encrypted prefs unavailable, using plain prefs", error)
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val editor = plain.edit()
+                encrypted.all.forEach { (key, value) ->
+                    when (value) {
+                        is String -> editor.putString(key, value)
+                        is Boolean -> editor.putBoolean(key, value)
+                        is Int -> editor.putInt(key, value)
+                        is Long -> editor.putLong(key, value)
+                        is Float -> editor.putFloat(key, value)
+                    }
+                }
+                editor.apply()
+                Log.i(TAG, "Migrated legacy encrypted prefs to plain storage")
+            }.onFailure {
+                Log.w(TAG, "No legacy encrypted prefs to migrate", it)
             }
         }
     }

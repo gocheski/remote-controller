@@ -29,6 +29,7 @@ fun PairingScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .screenContentInsets()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -54,7 +55,14 @@ fun PairingScreen(
             Text("Confirm Philips pairing")
         }
 
-        Text("Step 2 — Android TV Remote")
+        Text("Step 2 — Android TV Remote (text & voice)")
+        Text(
+            "Tap start, then enter the 6-character code shown on the TV.",
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { viewModel.startAtvPairing() }, modifier = Modifier.fillMaxWidth()) {
+            Text("Start Android TV pairing")
+        }
         OutlinedTextField(
             value = atvPin,
             onValueChange = { atvPin = it },

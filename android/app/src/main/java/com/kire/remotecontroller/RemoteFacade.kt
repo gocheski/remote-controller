@@ -47,8 +47,12 @@ class RemoteFacade(
         philips.setCredentials(challenge.deviceId, authKey)
     }
 
+    suspend fun startAtvPairing() {
+        atv.startPairing()
+    }
+
     suspend fun pairAtv(pinHex: String) {
-        atv.pair(pinHex.uppercase())
+        atv.finishPairing(pinHex.uppercase())
         store.saveDevice(
             host = host,
             name = store.getName() ?: host,
@@ -118,9 +122,49 @@ class RemoteFacade(
         }
     }
 
+    /** Opens the TV's settings menu (Philips Options / Android TV Settings). */
+    suspend fun tvSettings() {
+        if (philips.isPaired) {
+            val sent = runCatching { philips.sendKey("Options") }.isSuccess
+            if (!sent) {
+                runCatching { philips.sendKey("Setup") }
+            }
+        }
+        if (store.isAtvPaired() && !atv.useFallbackOnly) {
+            atv.sendKeyCode("SETTINGS")
+        }
+    }
+
     suspend fun currentChannel() = withContext(Dispatchers.IO) {
         if (!philips.isPaired) return@withContext null
         runCatching { philips.getCurrentTv() }.getOrNull()
+    }
+
+    /** Maps channel id/name to LCN (preset) from Philips channel list when available. */
+    suspend fun fetchChannelNumberMap(): Map<String, Int> = withContext(Dispatchers.IO) {
+        if (!philips.isPaired) return@withContext emptyMap()
+        runCatching {
+            val raw = philips.listChannelsRaw()
+            parsePhilipsChannelNumbers(raw)
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun parsePhilipsChannelNumbers(raw: String): Map<String, Int> {
+        val result = mutableMapOf<String, Int>()
+        val json = org.json.JSONObject(raw)
+        val lists = json.optJSONArray("channelLists") ?: return result
+        for (i in 0 until lists.length()) {
+            val list = lists.optJSONObject(i) ?: continue
+            val channels = list.optJSONArray("channels") ?: continue
+            for (j in 0 until channels.length()) {
+                val ch = channels.optJSONObject(j) ?: continue
+                val preset = ch.optInt("preset", ch.optInt("channelnumber", -1))
+                if (preset < 0) continue
+                ch.optString("ccid", "").takeIf { it.isNotBlank() }?.let { result[it] = preset }
+                ch.optString("name", "").takeIf { it.isNotBlank() }?.let { result[it] = preset }
+            }
+        }
+        return result
     }
 
     fun philipsApi(): PhilipsApi = philips
@@ -157,6 +201,7 @@ class RemoteFacade(
             "9" to "Digit9",
             "POWER" to "Standby",
             "GUIDE" to "Guide",
+            "SETTINGS" to "Options",
         )
     }
 }

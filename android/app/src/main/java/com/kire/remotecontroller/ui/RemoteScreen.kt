@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeMute
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.dp
 fun RemoteScreen(
     viewModel: AppViewModel,
     onOpenGuide: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val status by viewModel.status.collectAsState()
     val channelBuffer by viewModel.channelBuffer.collectAsState()
@@ -53,11 +55,21 @@ fun RemoteScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .screenContentInsets()
             .verticalScroll(scroll)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Remote", style = MaterialTheme.typography.headlineSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Remote", style = MaterialTheme.typography.headlineSmall)
+            TextButton(onClick = onOpenSettings) {
+                Text("App")
+            }
+        }
         Text(status, modifier = Modifier.fillMaxWidth())
 
         Button(
@@ -148,6 +160,7 @@ private fun ShortcutRow(viewModel: AppViewModel, onOpenGuide: () -> Unit) {
     val shortcuts = listOf(
         "Sources" to { viewModel.sources() },
         "TV" to { viewModel.watchTv() },
+        "Settings" to { viewModel.tvSettings() },
         "Ambilight" to { viewModel.ambilight() },
         "Guide" to onOpenGuide,
         "YouTube" to { viewModel.youtube() },
@@ -172,9 +185,15 @@ private fun ShortcutRow(viewModel: AppViewModel, onOpenGuide: () -> Unit) {
                             onClick = action,
                             modifier = Modifier.weight(1f),
                         ) {
-                            if (label == "TV") {
-                                Icon(Icons.Default.Tv, contentDescription = null)
-                                Spacer(Modifier.width(4.dp))
+                            when (label) {
+                                "TV" -> {
+                                    Icon(Icons.Default.Tv, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                }
+                                "Settings" -> {
+                                    Icon(Icons.Default.Settings, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                }
                             }
                             Text(label)
                         }
@@ -198,15 +217,33 @@ private fun Dpad(viewModel: AppViewModel, onOk: () -> Unit) {
             FilledTonalButton(onClick = onOk) { Text("OK") }
             FilledTonalButton(onClick = { viewModel.key("RIGHT") }) { Text("▶") }
         }
-        FilledTonalButton(onClick = { viewModel.key("DOWN") }) { Text("▼") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { viewModel.key("BACK") }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                Text("Back")
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            FilledTonalButton(
+                onClick = { viewModel.key("BACK") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
-            FilledTonalButton(onClick = { viewModel.key("HOME") }) {
-                Icon(Icons.Default.Home, contentDescription = null)
-                Text("Home")
+            FilledTonalButton(
+                onClick = { viewModel.key("DOWN") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+            ) {
+                Text("▼")
+            }
+            FilledTonalButton(
+                onClick = { viewModel.key("HOME") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+            ) {
+                Icon(Icons.Default.Home, contentDescription = "Home")
             }
         }
     }

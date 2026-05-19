@@ -1,11 +1,19 @@
 package com.kire.remotecontroller.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.padding
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF1565C0),
@@ -36,6 +44,13 @@ private val DarkColors = darkColorScheme(
 /** YouTube brand red — same in light and dark for recognition. */
 val YoutubeRed = Color(0xFFFF0000)
 val OnYoutubeRed = Color.White
+
+/** Keeps content below the status bar and above the navigation/gesture bar. */
+fun Modifier.screenContentInsets(): Modifier = composed {
+    windowInsetsPadding(WindowInsets.safeDrawing)
+        .imePadding()
+        .padding(bottom = 8.dp)
+}
 
 @Composable
 fun RemoteTheme(content: @Composable () -> Unit) {
