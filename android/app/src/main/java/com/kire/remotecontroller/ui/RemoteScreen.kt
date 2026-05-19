@@ -206,16 +206,47 @@ private fun ShortcutRow(viewModel: AppViewModel, onOpenGuide: () -> Unit) {
 
 @Composable
 private fun Dpad(viewModel: AppViewModel, onOk: () -> Unit) {
+    val dpadButtonHeight = 48.dp
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FilledTonalButton(onClick = { viewModel.key("UP") }) { Text("▲") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { viewModel.key("LEFT") }) { Text("◀") }
-            FilledTonalButton(onClick = onOk) { Text("OK") }
-            FilledTonalButton(onClick = { viewModel.key("RIGHT") }) { Text("▶") }
+        FilledTonalButton(
+            onClick = { viewModel.key("UP") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(dpadButtonHeight),
+        ) {
+            Text("▲")
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            FilledTonalButton(
+                onClick = { viewModel.key("LEFT") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(dpadButtonHeight),
+            ) {
+                Text("◀")
+            }
+            FilledTonalButton(
+                onClick = onOk,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(dpadButtonHeight),
+            ) {
+                Text("OK")
+            }
+            FilledTonalButton(
+                onClick = { viewModel.key("RIGHT") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(dpadButtonHeight),
+            ) {
+                Text("▶")
+            }
         }
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -225,7 +256,7 @@ private fun Dpad(viewModel: AppViewModel, onOk: () -> Unit) {
                 onClick = { viewModel.key("BACK") },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .height(dpadButtonHeight),
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
@@ -233,7 +264,7 @@ private fun Dpad(viewModel: AppViewModel, onOk: () -> Unit) {
                 onClick = { viewModel.key("DOWN") },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .height(dpadButtonHeight),
             ) {
                 Text("▼")
             }
@@ -241,7 +272,7 @@ private fun Dpad(viewModel: AppViewModel, onOk: () -> Unit) {
                 onClick = { viewModel.key("HOME") },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .height(dpadButtonHeight),
             ) {
                 Icon(Icons.Default.Home, contentDescription = "Home")
             }
